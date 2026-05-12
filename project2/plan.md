@@ -28,13 +28,15 @@
 
 | 파일 | objects (`o`) | vertex 수 | face 수 | face 종류 | 바운딩 박스 (x/y/z) |
 | --- | --- | --- | --- | --- | --- |
-| [Auto_Lift](code/uploads_files_6492087_Auto_Lift.obj) | 5 (Lift/Machine/Handle/Buttons/Railing) | 646 | 1,288 | **삼각형 1,288개만** | 0~3.0 / 0~1.5 / -1.5~0 |
-| [RobotArm](code/RobotArm.obj) | 4 (Robot_arm_2/large/end/robot_arm) | 28,764 | 28,454 | **삼각형 1,362 + 쿼드 26,575 + n-gon(6/8/12/32 verts) 다수** | -5.3~1.2 / -3.2~2.3 / -7.3~2.0 |
-| [saturn_V](code/saturn_V.obj) | 1 (saturn_v_Cylinder) | 55,376 | 48,443 | **삼각형 4,628 + 쿼드 43,591 + n-gon(5/6/8/9/12/15/16/30/32) 다수** | -1.9~1.9 / -2.8~18.2 / -1.9~1.9 |
+| [lift_plate](code/lift_plate.obj) | 5 (Lift/Machine/Handle/Buttons/Railing) | 646 | 1,288 | **삼각형 1,288개만** | 0~3.0 / 0~1.5 / -1.5~0 |
+| [robot_arm](code/robot_arm.obj) | 4 (Robot_arm_2/large/end/robot_arm) | 28,764 | 28,454 | **삼각형 1,362 + 쿼드 26,575 + n-gon(6/8/12/32 verts) 다수** | -5.3~1.2 / -3.2~2.3 / -7.3~2.0 |
+| [saturn_V_lp](code/saturn_V_lp.obj) | 1 (saturn_v_Cylinder) | — | — | **삼각형+쿼드+n-gon 혼합 (low-poly 버전)** | — |
+
+> `saturn_V_lp.obj`는 기존 고폴리(55k verts) 대비 로드 속도 및 렌더 부하 개선을 위해 low-poly 버전으로 교체됨. 내부 object/face 구성은 코드 실행 시 확인 후 업데이트.
 
 핵심 관찰:
-- **Auto_Lift**는 순수 삼각형 → 2-B-ii-1(triangle meshes) 시연용
-- **RobotArm / saturn_V**는 삼각형+쿼드+n-gon이 섞임 → 2-B-ii-3(mixed)뿐 아니라 2-B-iii(n-gon)까지 자연히 다룬다 → **fan triangulation 한 가지 코드 패스로 세 가지 케이스 모두 처리 가능**
+- **lift_plate**는 순수 삼각형 → 2-B-ii-1(triangle meshes) 시연용
+- **robot_arm / saturn_V_lp**는 삼각형+쿼드+n-gon이 섞임 → 2-B-ii-3(mixed)뿐 아니라 2-B-iii(n-gon)까지 자연히 다룬다 → **fan triangulation 한 가지 코드 패스로 세 가지 케이스 모두 처리 가능**
 - 두 OBJ에 `o` 블록이 여러 개 있다 → **OBJ를 객체 단위로 분리해서 서로 다른 transform을 줄 수 있다** → 계층 구조를 자연스럽게 5-level 이상까지 끌어올릴 수 있음
 - 면 형식은 모두 `f vi/vti/vni` 패턴 (positions + normals + uv, 모든 인덱스 1-based) — uv는 셰이딩에 안 쓰지만 무시 안 하고 안전하게 파싱
 - 스케일이 크게 다름 → 노드 transform에서 정규화/스케일을 따로 줘야 함
@@ -93,28 +95,32 @@ n개 정점 `v0, v1, ..., v(n-1)`의 면을 `(v0,v1,v2), (v0,v2,v3), ..., (v0,v(
 
 ### 3.2 계층 구조 설계 (2-C)
 
-#### 3.2.1 컨셉 — "로켓 발사 점검 시설"
+#### 3.2.1 컨셉 — "로켓 조립/점검 장면"
 
-Auto_Lift(이동식 작업대) 위에 RobotArm(점검용 로봇팔)이 올라가 있고, 그 옆/위에 Saturn V(점검 대상 로켓)가 놓여 있는 미니 발사장.
+Saturn V 로켓이 지면에 수평으로 뉘어져 있고, 이동식 작업대(lift_plate) 위의 로봇팔(robot_arm)이 로켓 길이 방향을 따라 좌우로 왕복하며 표면을 점검/작업하는 장면.
+- 로켓은 씬의 고정 기준물 (Root 직속, 애니메이션 없음)
+- 작업대+로봇이 로켓 옆을 따라 이동 (L1 좌우 이동)
+- 로봇팔 관절이 로켓 표면을 향해 굽혔다 펴기 반복 (L3~L5 회전)
 
 #### 3.2.2 씬 그래프 (5-level)
 
 ```
 Root [L0] (identity)
-└── Lift Base (Auto_Lift::Lift) [L1]                ← Y축 위/아래 sinusoidal 이동 + Y축 천천히 회전
-    ├── Lift Machine (Auto_Lift::Machine) [L2]      ← Lift Base에 고정 (오프셋만)
-    ├── Lift Handle (Auto_Lift::Handle) [L2]
-    ├── Lift Buttons (Auto_Lift::Buttons) [L2]
-    ├── Lift Railing (Auto_Lift::Railing) [L2]
-    ├── Saturn V (saturn_V::saturn_v_Cylinder) [L2] ← 작업대 위에서 천천히 자전 (Y축 회전)
-    └── Robot Arm Base (RobotArm::Robot_arm_2) [L2] ← Lift 모서리에 고정, Y축 회전 (스윙)
-        └── Robot Arm Large (RobotArm::robot_arm_large) [L3] ← 어깨 관절, X축 회전 (위아래)
-            └── Robot Arm Mid (RobotArm::robot_arm) [L4]     ← 팔꿈치 관절, X축 회전
-                └── Robot Arm End (RobotArm::robot_arm_end) [L5] ← 손목 wave, Z축 회전
+├── Saturn V (saturn_V_lp::saturn_v_Cylinder) [L1]   ← Rz(90°) 고정, X축 방향으로 수평 배치, 정적
+└── Lift Base (lift_plate::Lift) [L1]                 ← X축 sinusoidal 왕복 (로켓 길이 방향 이동)
+    ├── Lift Machine (lift_plate::Machine) [L2]       ← Lift Base에 고정 (오프셋만)
+    ├── Lift Handle (lift_plate::Handle) [L2]
+    ├── Lift Buttons (lift_plate::Buttons) [L2]
+    ├── Lift Railing (lift_plate::Railing) [L2]
+    └── Robot Arm Base (robot_arm::Robot_arm_2) [L2]  ← 판 위 고정, 로켓 방향으로 초기 오프셋
+        └── Robot Arm Large (robot_arm::robot_arm_large) [L3] ← 어깨 관절, X축 회전 (위아래)
+            └── Robot Arm Mid (robot_arm::robot_arm) [L4]     ← 팔꿈치 관절, X축 회전
+                └── Robot Arm End (robot_arm::robot_arm_end) [L5] ← 손목 wave, Z축 회전
 ```
 
 → **최소 3-level 조건을 넘어 5-level까지 도달** (스펙의 level-4 예시 도형보다 한 단계 깊다)
 → **3개 OBJ 파일 모두 사용** (조건 2-C-i-1 충족)
+→ Saturn V가 Root 직속이라 Lift와 독립적 — 작업대가 움직여도 로켓은 고정되어 계층 분리가 명확히 드러남
 
 #### 3.2.3 부모-자식 시각적 구분
 
@@ -160,23 +166,24 @@ for each Node in DFS order:
 
 `t = glfwGetTime()` 한 번 받아서 모든 노드에 분배. 모든 동작은 사인/코사인 기반이라 자연히 부드럽고 반복적.
 
-| 노드 | local 변환 (시간 t 함수) |
-| --- | --- |
-| Lift Base | `T(0, 0.3+0.3*sin(0.5t), 0) * Ry(0.2t)` |
-| Saturn V | `T(0, lift_top_y, 0) * Ry(0.4t)` (부모 Lift Base의 위/아래로 자연스럽게 함께 들림) |
-| Robot Arm Base | `T(arm_mount_offset) * Ry(sin(0.7t))` |
-| Robot Arm Large | `T(joint1_offset) * Rx(0.6 + 0.3*sin(1.2t))` |
-| Robot Arm Mid | `T(joint2_offset) * Rx(0.4 + 0.3*sin(1.5t + 1))` |
-| Robot Arm End | `T(joint3_offset) * Rz(sin(2.5t))` (wave) |
+| 노드 | local 변환 (시간 t 함수) | 설명 |
+| --- | --- | --- |
+| Saturn V | `T(0, rocket_y, 0) * Rz(90°)` | **정적** — Rz 90°로 수평 배치, X축 방향으로 길게 눕힘 |
+| Lift Base | `T(A*sin(0.4t), 0, rocket_side_z)` | X축 왕복 (로켓 길이 방향 이동), A = 진폭 (로켓 길이의 절반) |
+| Robot Arm Base | `T(arm_mount_offset)` | **정적** — 판 위 고정 위치, 로켓 방향으로 초기 오리엔테이션 |
+| Robot Arm Large | `T(joint1_offset) * Rx(bias + amp*sin(1.2t))` | 어깨: 로켓 표면 향해 굽혔다 펴기 |
+| Robot Arm Mid | `T(joint2_offset) * Rx(bias + amp*sin(1.5t + 1))` | 팔꿈치: 위상 어긋나게 — 자연스러운 관절 연동 |
+| Robot Arm End | `T(joint3_offset) * Rz(0.5*sin(2.5t))` | 손목: 빠른 주기 wave (작업 제스처) |
 
-각 관절은 **회전 진폭과 위상이 모두 다르게** — 단순한 동기 회전이 아니라 살아있는 동작처럼 보이게.
+각 관절은 **회전 진폭·위상·주기가 모두 달라** 단순 동기 회전이 아닌 살아있는 작업 동작처럼 보이게.
+Lift Base의 X 왕복에 의해 작업대+로봇이 통째로 이동하면서, 로봇팔 관절은 독립적으로 동작 → **부모 이동이 자식에 자동 전파**되는 hierarchical transform이 시각적으로 명확히 드러남.
 
 #### 3.2.6 정렬/스케일 정규화
 
 OBJ들이 크기가 들쭉날쭉하므로 mesh 로드 시 자동 정규화:
-- Auto_Lift: 그대로 사용 (~3 units)
-- saturn_V: `scale = 0.15`, 베이스가 (0,0,0)에 오도록 y 오프셋
-- RobotArm 각 sub-object: `scale = 0.20`, 각 part의 회전축이 원점에 오도록 pivot 오프셋
+- lift_plate: 그대로 사용 (~3 units)
+- saturn_V_lp: `scale = 0.15`, 베이스가 (0,0,0)에 오도록 y 오프셋 (low-poly이므로 기존 scale 값 유지 후 시각 확인)
+- robot_arm 각 sub-object: `scale = 0.20`, 각 part의 회전축이 원점에 오도록 pivot 오프셋
 
 핵심: **각 sub-mesh의 "관절 회전축"을 원점에 두는 게 hierarchical animation의 키**. mesh를 로드할 때 부모 좌표계 기준 pivot offset을 계산해서 `M_pivot` 으로 한 번 곱해놓으면, 그 다음 `Rx(theta)`만 곱해도 자연스러운 관절 회전이 나옴.
 
@@ -243,15 +250,15 @@ project2/
 │   ├── shaders.py           ← Phong vertex/fragment 셰이더 + load_shaders
 │   ├── vao.py               ← grid / frame (좌표축) VAO만 유지
 │   ├── input.py             ← 카메라 콜백 (Project 1 유지, 사용 안하는 키 제거)
-│   ├── Auto_Lift.obj  (=현 uploads_files_6492087_Auto_Lift.obj를 이름 변경 권장)
-│   ├── RobotArm.obj
-│   └── saturn_V.obj
+│   ├── lift_plate.obj
+│   ├── robot_arm.obj
+│   └── saturn_V_lp.obj
 ├── plan.md                  ← 이 문서
 ├── Project2-2026.pdf
 └── report.pdf               ← 최종 보고서 (마감 전 작성)
 ```
 
-상대 경로: `os.path.join(os.path.dirname(__file__), 'Auto_Lift.obj')` 패턴으로 TA 환경에서도 동작 (스펙 2-C-ii-2).
+상대 경로: `os.path.join(os.path.dirname(__file__), 'lift_plate.obj')` 패턴으로 TA 환경에서도 동작 (스펙 2-C-ii-2).
 
 ---
 
@@ -265,7 +272,7 @@ project2/
    - [ ] fan triangulation → flat (pos, normal) 6-float 배열
    - [ ] vn이 없는 경우 face normal로 채우는 fallback
    - [ ] OBJ 내 `o` 블록마다 별도 Mesh 인스턴스 (VAO/VBO 따로)
-   - [ ] 단위 테스트: `cube-tri.obj`, `cube-tri-quad.obj`로 검증 (있다면). 없으면 Auto_Lift로 비주얼 확인
+   - [ ] 단위 테스트: `cube-tri.obj`, `cube-tri-quad.obj`로 검증 (있다면). 없으면 lift_plate로 비주얼 확인
 
 2. **Phong 셰이더 [shaders.py]**
    - [ ] vertex: position+normal in, MVP/M/NormalMatrix 적용, world pos/normal out
@@ -288,7 +295,7 @@ project2/
    - [ ] 카메라 초기 위치를 씬 전체가 보이는 거리로 ([input.py:6](code/input.py#L6) `g_cam_dist`)
 
 6. **최종**
-   - [ ] OBJ 파일명을 깔끔히 (Auto_Lift.obj 등)
+   - [ ] OBJ 파일명 확인 (lift_plate.obj / robot_arm.obj / saturn_V_lp.obj)
    - [ ] 20초 데모 영상 녹화 (메시 / 계층 / 애니메이션 명확히 보이게 카메라 회전 한 번 + 정면 한 번)
    - [ ] YouTube 비공개 ❌ → **공개** 업로드 (Unlisted도 가능)
    - [ ] report.pdf 작성 (2-A-iii, 2-B-vi, 2-C-vi, 2-D-iii + 영상 링크)
@@ -303,7 +310,7 @@ project2/
 | n-gon이 비볼록일 때 fan triangulation이 깨짐 | 본 자산에서 시각 확인됨. 발생 시 ear-clipping fallback 추가 (현재는 미구현으로 시작) |
 | OBJ에 normal이 없는 경우 | face normal로 fallback 구현 (3.1.1 참고) |
 | 노멀 행렬이 비균일 스케일에서 깨짐 | `mat3(transpose(inverse(M)))` 정공법 사용 |
-| 큰 mesh 로드 시 시작 지연 (saturn_V 55k verts) | 첫 1회만 비용 발생. 매 프레임이 아닌 부팅 시간으로 흡수 가능 |
+| mesh 로드 시 시작 지연 (saturn_V_lp는 low-poly로 교체되어 부담 감소) | 첫 1회만 비용 발생. 매 프레임이 아닌 부팅 시간으로 흡수 가능 |
 | TA 환경에서 경로 깨짐 | `os.path.join(os.path.dirname(__file__), …)` 일관 사용 + 상대 경로만 |
 | 영상 비공개 → 0점 위험 | 업로드 후 시크릿 모드에서 링크 직접 확인 |
 | 보고서가 "구현 설명"에 그치고 "왜 그렇게 했는지"가 빠짐 | 본 문서의 "왜 이 방식인가" 단락들을 그대로 보고서로 이식 |
