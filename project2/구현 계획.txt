@@ -182,34 +182,73 @@ C. 위 방식을 선택한 이유
 E. Lighting Design
 ────────────────────────────────────────────────────────────
 A. lighting parameters 선택
-    main.py 상단에 정의:
-        LIGHT_POS    = vec3(8.0, 12.0, 8.0)
-        LIGHT_COLOR  = vec3(1.00, 0.96, 0.96)   ≈ 살짝 따뜻한 백색
-        KA, KD, KS   = 0.20, 0.75, 0.55
-        shininess    = 32.0
-    셰이더 (shaders.py 의 g_*_phong) 는 단일 점광원 +
-    ambient/diffuse/specular 의 Phong illumination + fragment 단위
-    정규화(Phong shading) 를 구현한다.
+    Phong Illumination Model 수식 (강의 슬라이드 형태):
+        I = l_a * m_a
+          + l_d * m_d * max(0, L·N)
+          + l_s * m_s * max(0, V·R)^n
+      · l_a / l_d / l_s : light 의 ambient/diffuse/specular color
+      · m_a / m_d / m_s : material 의 ambient/diffuse/specular
+                          reflectance
+      · L = 표면점 → 광원 방향(정규화), N = 표면 normal,
+        V = 표면점 → 카메라 방향, R = reflect(-L, N), n = shininess.
+
+    본 구현은 단일 점광원 + per-fragment(Phong shading) 평가로 위
+    식을 구현하며, 코드 상에서 위 항들이 다음과 같이 매핑된다
+    (main.py / shaders.py 의 g_*_phong).
+
+    [광원 항: l_a, l_d, l_s]
+      LIGHT_POS    = vec3(8.0, 12.0, 8.0)             ← 점광원 위치
+      LIGHT_COLOR  = vec3(1.00, 0.96, 0.96)           ← 살짝 따뜻한 백색
+      KA, KD, KS   = 0.20, 0.75, 0.55
+        → 셰이더에서는 LIGHT_COLOR 하나를 채널별 세기로 스케일하여
+          식의 (l_a, l_d, l_s) 로 사용한다.
+              l_a = LIGHT_COLOR * KA
+              l_d = LIGHT_COLOR * KD
+              l_s = LIGHT_COLOR * KS
+          즉 광원 색 자체는 한 가지지만 ambient/diffuse/specular
+          채널마다 다른 세기를 부여한다.
+
+    [재질 항: m_a, m_d, m_s]
+      material_color   = 노드별 vec3 (Node.color, draw 직전 uniform 전송)
+        → 부품 고유 색을 ambient/diffuse 반사율 둘 다에 그대로 쓴다:
+              m_a = material_color
+              m_d = material_color
+          (광원 색이 살짝 따뜻한 백색이라 material 색이 그대로
+          최종 색의 hue 를 결정한다.)
+        → specular 는 색이 아닌 광택을 묘사하므로 무채색으로 둔다:
+              m_s = vec3(1.0, 1.0, 1.0)
+          하이라이트는 광원 색만 따른다 → 금속/플라스틱처럼 표면색과
+          분리된 흰 하이라이트가 떠오른다.
+
+    [지수 n]
+      shininess = 32.0  → (V·R)^32. 적당히 광택 있는 플라스틱/도장
+      금속 톤. 값이 너무 작으면 하이라이트가 면 전체로 번지고, 너무
+      크면 점처럼 좁아져 움직임이 안 읽힌다.
 
     선택 근거
      - 광원 위치 (8, 12, 8): 모델 위쪽-오른쪽 대각선에서 비추는
        "key light" 구도. 정수리에서만 비추는 톱뷰는 측면 디테일이
-       묻히므로 비스듬한 배치를 선택.
+       묻히므로 비스듬한 배치를 선택해 L·N 의 변화 폭을 키운다.
      - 광원 색 (1.0, 0.96, 0.96): 완전 백색 대신 미세하게 따뜻하게
-       하여 회색 금속/플라스틱 톤의 부품에서 화면이 너무
-       차갑게(파랗게) 보이지 않도록 함.
-     - KA = 0.20: 그림자에 들어간 면도 완전히 까맣게 사라지지 않고
-       실루엣과 색상이 보일 정도로만 채움.
-     - KD = 0.75: 면 방향에 따른 명암 차이를 가장 크게 두어 형상이
-       잘 읽히게 함(메인 contrast 채널).
-     - KS = 0.55, shininess = 32: 금속/플라스틱처럼 적당히 광택이
-       있되 하이라이트가 너무 좁아 점처럼 보이지 않도록 중간 광택.
-     - light leak 방지: diff ≤ 0 인 면에서는 specular 를 강제로 0
-       으로 둬서 뒷면이 반짝이는 비물리적 아티팩트를 막음
-       (fragment shader 내 if(diff<=0) spec=0).
+       하여 회색/금속 톤 부품에서 화면이 너무 차갑게(파랗게) 보이지
+       않도록 함.
+     - KA = 0.20 (→ l_a = 0.20·LIGHT_COLOR): max(0, L·N) 이 0 인
+       음영부도 m_a 와 곱해 완전 검정으로 떨어지지 않도록 채움.
+       그러나 너무 크지 않아 depth(앞/뒤) 단서는 유지.
+     - KD = 0.75 (→ l_d): 면 방향에 따른 max(0, L·N) 항의 명암
+       차이를 가장 크게 두어 형상이 잘 읽히게 함(메인 contrast 채널).
+     - KS = 0.55, n = 32 (→ l_s, (V·R)^n): 금속/플라스틱처럼 적당히
+       광택이 있되 하이라이트가 너무 좁아 점처럼 보이지 않도록 한
+       중간 광택.
+     - light leak 방지: max(0, L·N) 이 0 인 면(뒷면)에서는 specular
+       항을 강제로 0 으로 둬서 뒷면이 반짝이는 비물리적 아티팩트를
+       막음 (fragment shader 내 if(diff<=0) spec=0).
+       → 수식 상으로는 specular 도 max(0, V·R)^n 으로 음수가 차단되지만,
+         시점-법선 관계상 뒷면에 V·R 이 양수로 잡히는 경우를
+         추가 차단하는 효과.
      - NormalMatrix = transpose(inverse(mat3(M))): 비균일 스케일
-       (shape_transform 의 scale(0.20) 등)에서도 normal 이 휘지
-       않도록 보정.
+       (shape_transform 의 scale(0.20) 등)에서도 N 이 휘지 않도록
+       보정 → L·N, V·R 계산이 형상 왜곡과 무관하게 정확.
 
 B. Scene 의 visual appearance 와 readability 에 미치는 영향
     - 비스듬한 key light 덕분에 saturn V 로켓의 원통/링,

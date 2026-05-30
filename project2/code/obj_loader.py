@@ -5,7 +5,7 @@ plan.md §3.1 에 따른 메시 처리 설계:
  - 정점 단위(position+normal) 데이터를 VBO 에 그대로 복제 (un-indexed)
    → OBJ 의 분리 인덱스(pos vs normal) 차이를 그대로 보존할 수 있음
  - vn 이 없는 면은 cross product face normal 로 fallback
- - 파일 내부 `o name` 블록마다 별도의 Mesh 인스턴스로 분리 →
+ - 파일 내부 `o name` 블록마다 별도의 Node 인스턴스로 분리 →
    계층 구조 설계 단계에서 sub-object 단위 transform 부여가 가능
 """
 
@@ -15,9 +15,9 @@ from OpenGL.GL import *
 import glm
 
 
-# ── Mesh ────────────────────────────────────────────────────────────────────
+# ── Node ────────────────────────────────────────────────────────────────────
 
-class Mesh:
+class Node:
     def __init__(self, parent, shape_transform, color):
         self.vao = None
         self.vertex_count = 0
@@ -102,7 +102,7 @@ def load_obj(path):
     """OBJ → {object_name: flat_float_list}  (파일 내 `o` 블록 순서 유지).
 
     각 그룹의 raw vertex stream 을 반환한다. 호출측에서 원하는 그룹을 골라
-    합쳐 `make_vao()` 로 단일 VAO 를 만들고, Mesh setter 로 주입한다.
+    합쳐 `make_vao()` 로 단일 VAO 를 만들고, Node setter 로 주입한다.
     """
     positions = []   # [(x,y,z), ...]
     normals   = []   # [(nx,ny,nz), ...]

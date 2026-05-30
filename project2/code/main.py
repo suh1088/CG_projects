@@ -10,14 +10,14 @@ from shaders import (
     g_vertex_shader_phong,      g_fragment_shader_phong,      # Phong (meshes)
 )
 from vao import prepare_vao_frame, prepare_vao_pivot, prepare_vao_grid
-from obj_loader import load_obj, make_vao, Mesh
+from obj_loader import load_obj, make_vao, Node
 import input as inp
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Lighting parameters (plan §3.3)
 # ──────────────────────────────────────────────────────────────────────
-LIGHT_POS    = glm.vec3(8.0, 12.0, 8.0)
+LIGHT_POS    = glm.vec3(-8.0, 12.0, -8.0)
 LIGHT_COLOR  = glm.vec3(1.00, 0.96, 0.96)
 KA, KD, KS   = 0.20, 0.75, 0.55
 
@@ -64,21 +64,21 @@ def main():
     vao_grid, grid_vertex_count = prepare_vao_grid()
 
     # ── 메시 계층 정의 (parent, shape_transform, color) ──────────────
-    lift = Mesh(None,
+    lift = Node(None,
                 glm.mat4(),
                 glm.vec3(0.8, 0.3, 0.3))
 
                 # glm.vec3(0.45, 0.47, 0.50))
-    saturn = Mesh(None,
+    saturn = Node(None,
                   glm.scale(glm.vec3(0.8)),
                   glm.vec3(1, 1, 1))
-    robot_arm_1 = Mesh(lift,
+    robot_arm_1 = Node(lift,
                        glm.scale(glm.vec3(0.20)),
                        glm.vec3(0.9686, 0.8667, 0.3294))
-    robot_arm_2 = Mesh(robot_arm_1,
+    robot_arm_2 = Node(robot_arm_1,
                        glm.scale(glm.vec3(0.20)),
                        glm.vec3(0.9686, 0.8667, 0.3294))
-    robot_arm_3 = Mesh(robot_arm_2,
+    robot_arm_3 = Node(robot_arm_2,
                        glm.scale(glm.vec3(0.20)),
                        glm.vec3(0.9686, 0.8667, 0.3294))
 
@@ -119,7 +119,7 @@ def main():
     robot_arm_3.set_vao(arm3_vao);      robot_arm_3.set_vertex_count(arm3_count)
 
     roots  = [lift, saturn]
-    meshes = [lift, saturn, robot_arm_1, robot_arm_2, robot_arm_3]
+    nodes = [lift, saturn, robot_arm_1, robot_arm_2, robot_arm_3]
 
     # ── 렌더 루프 ──────────────────────────────────────────────────
     glEnable(GL_DEPTH_TEST)
@@ -167,6 +167,9 @@ def main():
         glUniform1f(loc_kd, KD)
         glUniform1f(loc_ks, KS)
 
+        shoulder = glm.vec3(1.83, 6, -1.08) * 0.20
+        elbow    = glm.vec3(1.83, 10.15, -1.08) * 0.20
+
         t = glfwGetTime()
 
         saturn.set_transform(glm.translate((5,1,1))* 
@@ -180,11 +183,6 @@ def main():
         robot_arm_1.set_transform(glm.translate((2, 0,-0.5))*
                                   glm.rotate(np.radians(90),glm.vec3(0,1,0)))
         
-        # 관절점은 OBJ 좌표계 기준 위치에 shape_transform 의 scale(0.20) 을 곱한 값.
-        # arm2 의 어깨 관절: 기둥(Cylinder.003) 위, arm2 기하 바닥 ≈ (1.83, 5.30, -1.08)
-        # arm3 의 팔꿈치 관절: arm2 끝의 hinge(Cylinder.014_Cylinder.026) 중심 ≈ (1.83, 10.15, -1.08)
-        shoulder = glm.vec3(1.83, 6, -1.08) * 0.20
-        elbow    = glm.vec3(1.83, 10.15, -1.08) * 0.20
 
         robot_arm_2.set_transform(glm.translate(shoulder) *
                                   glm.rotate(-np.abs(np.sin(t*0.7)), glm.vec3(0,0,1)) *
@@ -197,10 +195,10 @@ def main():
         for root in roots:
             root.update_tree_global_transform()
 
-        for mesh in meshes:
-            if mesh.vao is None:
+        for node in nodes:
+            if node.vao is None:
                 continue
-            M = mesh.get_global_transform() * mesh.get_shape_transform()
+            M = node.get_global_transform() * node.get_shape_transform()
             MVP = VP * M
             NormalMatrix = glm.transpose(glm.inverse(glm.mat3(M)))
 
@@ -208,9 +206,9 @@ def main():
             glUniformMatrix4fv(loc_M,            1, GL_FALSE, glm.value_ptr(M))
             glUniformMatrix3fv(loc_NormalMatrix, 1, GL_FALSE, glm.value_ptr(NormalMatrix))
 
-            glUniform3fv(loc_material_color, 1, glm.value_ptr(mesh.get_color()))
+            glUniform3fv(loc_material_color, 1, glm.value_ptr(node.get_color()))
             glUniform1f(loc_shininess, 32.0)
-            mesh.draw()
+            node.draw()
 
         glfwSwapBuffers(window)
         glfwPollEvents()
